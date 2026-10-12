@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum EmploymentType {
+  REGULAR
+  CONTRACTUAL
+}
+
+enum FacultyStatus {
+  ACTIVE
+  LEFT
+  ON_LEAVE
+}
+
+enum QualClassification {
+  X
+  Y
+  EXCLUDE
+  UNCLASSIFIED
+}
+
+enum DataSource {
+  CSV_IMPORT
+  MANUAL_ENTRY
+}
+
+enum FRequiredMethod {
+  AUTOMATIC
+  INSTITUTIONAL
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+
+  facultyCreated       Faculty[]      @relation("FacultyCreatedBy")
+  calculationsRun      CalculationResult[] @relation("CalcRunBy")
+}
+
+model AssessmentCycle {
+  id        String   @id @default(cuid())
+  name      String   @unique // e.g. "2025-26 Cycle"
+  CAY       String   // e.g. "2025-26"
+  CAYm1     String   // e.g. "2024-25"
+  CAYm2     String   // e.g. "2023-24"
+  createdAt DateTime @default(now())
+  isActive  Boolean  @default(false)
+
+  facultyAcademicRecords FacultyAcademicRecord[]
+  teachingLoads          TeachingLoad[]
+  studentData            StudentData[]
+  calculationResults     CalculationResult[]
+
+  @@index([isActive])
+}
+
+model Faculty {
+  id             String         @id @default(cuid())
+  facultyCode    String         @unique
+  name           String
+  qualification  String
+  specialization String?
+  university     String?
+  graduationYear Int?
+  designation    String?
+  joiningDate    DateTime?
+  leavingDate    DateTime?
+  employmentType EmploymentType
+  department     String
+  program        String?
+  status         FacultyStatus  @default(ACTIVE)
+  source         DataSource     @default(MANUAL_ENTRY)
+  createdById    String?
+  createdBy      User?          @relation("FacultyCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  academicRecords FacultyAcademicRecord[]
+  teachingLoads   TeachingLoad[]
+
+  @@index([department])
+  @@index([employmentType])
+  @@index([status])
+}
+
+// Snapshot of a faculty member's qualification/employment/designation
+// for a specific academic year + cycle — qualifications, designations etc.
+// can change year over year, so this is tracked separately from Faculty.
+model FacultyAcademicRecord {
+  id                 String          @id @default(cuid())
+  facultyId          String
+  faculty            Faculty         @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  assessmentCycleId  String
+  assessmentCycle    AssessmentCycle @relation(fields: [assessmentCycleId], references: [id])
+  academicYear       String
+  semester           String?
+  qualification      String
+  employmentType     EmploymentType
+  designation        String?
+  experience         Float?
+  createdAt          DateTime        @default(now())
+
+  @@unique([facultyId, assessmentCycleId, academicYear, semester])
+  @@index([academicYear])
+}
+
+model TeachingLoad {
+  id                     String          @id @default(cuid())
+  facultyId              String
+  faculty                Faculty         @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  assessmentCycleId      String
+  assessmentCycle        AssessmentCycle @relation(fields: [assessmentCycleId], references: [id])
+  academicYear           String
+  semester               String?
+  program                String
+  department             String
+  academicLoadPercentage Float           // stored as 0-100, converted to fraction in calc layer
+  researchLoadPercentage Float?          @default(0)
+  isOwnDepartment        Boolean         @default(true)
+  isExternalFaculty      Boolean         @default(false)
+  servesOtherDepartment  Boolean         @default(false)
+  createdAt              DateTime        @default(now())
+
+  @@index([academicYear, program, department])
+}
+
+model StudentData {
+  id                    String          @id @default(cuid())
+  assessmentCycleId     String
+  assessmentCycle       AssessmentCycle @relation(fields: [assessmentCycleId], references: [id])
+  academicYear          String
+  program               String
+  sanctionedIntake      Int
+  lateralEntryStudents  Int             @default(0)
+  totalStudents         Int             // computed = sanctionedIntake + lateralEntryStudents, stored for query convenience
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@unique([assessmentCycleId, academicYear, program])
+}
+
+model QualificationMapping {
+  id                  String             @id @default(cuid())
+  sourceQualification String             @unique
+  classification      QualClassification
+  createdAt            DateTime          @default(now())
+}
+
+model CalculationResult {
+  id                String          @id @default(cuid())
+  assessmentCycleId String
+  assessmentCycle   AssessmentCycle @relation(fields: [assessmentCycleId], references: [id])
+  academicYear      String
+  calculationType   String          // "SFR" | "REGULAR_CONTRACTUAL" | "FQI"
+  inputData         Json            // raw inputs used (a, b, c, N, X, Y, F, method, etc.)
+  formula           String
+  result            Float
+  fRequiredMethod   FRequiredMethod?
+  runById            String?
+  runBy              User?          @relation("CalcRunBy", fields: [runById], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@index([assessmentCycleId, calculationType, academicYear])
+}
